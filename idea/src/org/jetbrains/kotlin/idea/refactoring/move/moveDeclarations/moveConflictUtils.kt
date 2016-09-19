@@ -41,6 +41,7 @@ import org.jetbrains.kotlin.psi.psiUtil.getStrictParentOfType
 import org.jetbrains.kotlin.psi.psiUtil.isInsideOf
 import org.jetbrains.kotlin.resolve.BindingContext
 import org.jetbrains.kotlin.resolve.DescriptorUtils
+import org.jetbrains.kotlin.resolve.lazy.BodyResolveMode
 import org.jetbrains.kotlin.resolve.source.KotlinSourceElement
 import org.jetbrains.kotlin.utils.SmartSet
 import java.util.*
@@ -186,6 +187,7 @@ class MoveConflictChecker(
             val referencingDescriptor = when (container) {
                                             is KtDeclaration -> container.resolveToDescriptor()
                                             is PsiMember -> container.getJavaMemberDescriptor()
+                                            is KtFile -> container.analyze(BodyResolveMode.PARTIAL)[BindingContext.FILE_TO_PACKAGE_FRAGMENT, container]
                                             else -> null
                                         } ?: continue
             val targetContainer = moveTarget.getContainerDescriptor() ?: continue
