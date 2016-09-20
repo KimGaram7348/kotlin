@@ -34,32 +34,23 @@ import org.jetbrains.kotlin.types.*
 import java.io.File
 import java.lang.RuntimeException
 import java.lang.UnsupportedOperationException
-import kotlin.reflect.KClass
-import kotlin.reflect.KType
-import kotlin.reflect.KTypeProjection
-import kotlin.reflect.KVariance
+import kotlin.reflect.*
 import kotlin.script.StandardScriptTemplate
 
-interface KotlinScriptDefinition {
-    val name: String get() = "Kotlin Script"
+open class KotlinScriptDefinition(val template: KClass<out Any>) {
 
-    val template: KClass<out Any>
+    open val name: String = "Kotlin Script"
 
     // TODO: consider creating separate type (subtype? for kotlin scripts)
-    val fileType: LanguageFileType get() = KotlinFileType.INSTANCE
+    open val fileType: LanguageFileType = KotlinFileType.INSTANCE
 
-    fun <TF> isScript(file: TF): Boolean =
+    open fun <TF> isScript(file: TF): Boolean =
             getFileName(file).endsWith(KotlinParserDefinition.STD_SCRIPT_EXT)
 
-    // TODO: replace these 3 functions with template property
-    fun getScriptParameters(scriptDescriptor: ScriptDescriptor): List<ScriptParameter>
-    fun getScriptSupertypes(scriptDescriptor: ScriptDescriptor): List<KotlinType> = emptyList()
-    fun getScriptParametersToPassToSuperclass(scriptDescriptor: ScriptDescriptor): List<Name> = emptyList()
-
-    fun getScriptName(script: KtScript): Name =
+    open fun getScriptName(script: KtScript): Name =
         ScriptNameUtil.fileNameWithExtensionStripped(script, KotlinParserDefinition.STD_SCRIPT_EXT)
 
-    fun <TF> getDependenciesFor(file: TF, project: Project, previousDependencies: KotlinScriptExternalDependencies?): KotlinScriptExternalDependencies? = null
+    open fun <TF> getDependenciesFor(file: TF, project: Project, previousDependencies: KotlinScriptExternalDependencies?): KotlinScriptExternalDependencies? = null
 }
 
 interface KotlinScriptExternalDependencies {
@@ -70,17 +61,14 @@ interface KotlinScriptExternalDependencies {
     val scripts: Iterable<File> get() = emptyList()
 }
 
-class KotlinScriptExternalDependenciesUnion(val dependencies: Iterable<KotlinScriptExternalDependencies>) : KotlinScriptExternalDependencies {
-    override val javaHome: String? get() = dependencies.firstOrNull { it.javaHome != null }?.javaHome
-    override val classpath: Iterable<File> get() = dependencies.flatMap { it.classpath }
-    override val imports: Iterable<String> get() = dependencies.flatMap { it.imports }
-    override val sources: Iterable<File> get() = dependencies.flatMap { it.sources }
-    override val scripts: Iterable<File> get() = dependencies.flatMap { it.scripts }
-}
-
 data class ScriptParameter(val name: Name, val type: KotlinType)
 
-object StandardScriptDefinition : KotlinScriptDefinitionFromTemplate(StandardScriptTemplate::class)
+object StandardScriptDefinition : KotlinScriptDefinition(StandardScriptTemplate::class)
+
+fun KotlinScriptDefinition.getScriptParameters(scriptDescriptor: ScriptDescriptor): List<ScriptParameter> =
+        template.primaryConstructor?.parameters
+                ?.map { ScriptParameter(Name.identifier(it.name!!), getKotlinTypeByKType(scriptDescriptor, it.type)) }
+        ?: emptyList()
 
 fun getKotlinType(scriptDescriptor: ScriptDescriptor, kClass: KClass<out Any>): KotlinType =
         getKotlinTypeByFqName(scriptDescriptor,

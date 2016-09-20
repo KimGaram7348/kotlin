@@ -22,24 +22,22 @@ import com.intellij.openapi.vfs.StandardFileSystems
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiManager
-import org.jetbrains.kotlin.descriptors.ScriptDescriptor
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.parsing.KotlinParserDefinition
 import org.jetbrains.kotlin.psi.KtAnnotationEntry
 import org.jetbrains.kotlin.psi.KtFile
 import org.jetbrains.kotlin.psi.KtScript
-import org.jetbrains.kotlin.types.KotlinType
 import org.jetbrains.kotlin.utils.addToStdlib.firstIsInstanceOrNull
 import java.io.File
 import kotlin.reflect.KClass
 import kotlin.reflect.memberFunctions
 import kotlin.reflect.primaryConstructor
 
-open class KotlinScriptDefinitionFromTemplate(final override val template: KClass<out Any>,
+open class KotlinScriptDefinitionFromTemplate(template: KClass<out Any>,
                                               val resolver: ScriptDependenciesResolver? = null,
                                               val scriptFilePattern: String? = null,
                                               val environment: Map<String, Any?>? = null
-) : KotlinScriptDefinition {
+) : KotlinScriptDefinition(template) {
 
     // TODO: remove this and simplify definitionAnnotation as soon as deprecated annotations will be removed
     internal class ScriptTemplateDefinitionData(val resolverClass: KClass<out ScriptDependenciesResolver>,
@@ -89,15 +87,6 @@ open class KotlinScriptDefinitionFromTemplate(final override val template: KClas
     }
 
     override val name = template.simpleName!!
-
-    override fun getScriptParameters(scriptDescriptor: ScriptDescriptor): List<ScriptParameter> =
-            template.primaryConstructor!!.parameters.map { ScriptParameter(Name.identifier(it.name!!), getKotlinTypeByKType(scriptDescriptor, it.type)) }
-
-    override fun getScriptSupertypes(scriptDescriptor: ScriptDescriptor): List<KotlinType> =
-            listOf(getKotlinTypeByFqName(scriptDescriptor, template.qualifiedName!!))
-
-    override fun getScriptParametersToPassToSuperclass(scriptDescriptor: ScriptDescriptor): List<Name> =
-            getScriptParameters(scriptDescriptor).map { it.name }
 
     override fun <TF> isScript(file: TF): Boolean =
             definitionData.scriptFilePattern?.let { Regex(it).matches(getFileName(file)) } ?: false
