@@ -23,6 +23,7 @@ import org.jetbrains.kotlin.descriptors.impl.FunctionDescriptorImpl
 import org.jetbrains.kotlin.descriptors.impl.SimpleFunctionDescriptorImpl
 import org.jetbrains.kotlin.descriptors.impl.ValueParameterDescriptorImpl
 import org.jetbrains.kotlin.name.Name
+import org.jetbrains.kotlin.types.TypeSubstitutor
 import org.jetbrains.kotlin.types.Variance
 import org.jetbrains.kotlin.util.OperatorNameConventions
 
@@ -72,12 +73,10 @@ class FunctionInvokeDescriptor private constructor(
 
     override fun isTailrec(): Boolean = false
 
-    private fun replaceParameterNames(parameterNames: List<Name?>): FunctionInvokeDescriptor {
+    private fun replaceParameterNames(parameterNames: List<Name?>): FunctionDescriptor {
         val indexShift = valueParameters.size - parameterNames.size
         assert(indexShift == 0 || indexShift == 1) // indexShift == 1 for extension function type
 
-        val hasSynthesizedParameterNames = parameterNames.any { it == null }
-        val newDescriptor = FunctionInvokeDescriptor(containingDeclaration, this, kind, hasSynthesizedParameterNames)
         val newValueParameters = valueParameters.map {
             var newName = it.name
             val parameterIndex = it.index
@@ -88,10 +87,15 @@ class FunctionInvokeDescriptor private constructor(
                     newName = parameterName
                 }
             }
-            it.copy(newDescriptor, newName, parameterIndex)
+            it.copy(this, newName, parameterIndex)
         }
-        newDescriptor.initialize(extensionReceiverParameterType, dispatchReceiverParameter, typeParameters, newValueParameters, returnType, modality, visibility)
-        return newDescriptor
+
+        val copyConfiguration = newCopyBuilder(TypeSubstitutor.EMPTY)
+                .setHasSynthesizedParameterNames(parameterNames.any { it == null })
+                .setValueParameters(newValueParameters)
+                .setOriginal(original)
+
+        return super.doSubstitute(copyConfiguration)!!
     }
 
     companion object Factory {

@@ -351,6 +351,7 @@ public abstract class FunctionDescriptorImpl extends DeclarationDescriptorNonRoo
         private boolean isHiddenForResolutionEverywhereBesideSupercalls = isHiddenForResolutionEverywhereBesideSupercalls();
         private SourceElement sourceElement;
         private Map<UserDataKey<?>, Object> userDataMap = new LinkedHashMap<UserDataKey<?>, Object>();
+        private Boolean newHasSynthesizedParameterNames = null;
 
         public CopyConfiguration(
                 @NotNull TypeSubstitution substitution,
@@ -504,6 +505,11 @@ public abstract class FunctionDescriptorImpl extends DeclarationDescriptorNonRoo
         @Override
         public CopyConfiguration setAdditionalAnnotations(@NotNull Annotations additionalAnnotations) {
             this.additionalAnnotations = additionalAnnotations;
+            return this;
+        }
+
+        public CopyConfiguration setHasSynthesizedParameterNames(boolean value) {
+            this.newHasSynthesizedParameterNames = value;
             return this;
         }
 
@@ -679,6 +685,10 @@ public abstract class FunctionDescriptorImpl extends DeclarationDescriptorNonRoo
                     }
                 };
             }
+        }
+
+        if (configuration.newHasSynthesizedParameterNames != null) {
+            substitutedDescriptor.setHasSynthesizedParameterNames(hasSynthesizedParameterNames);
         }
 
         return substitutedDescriptor;
