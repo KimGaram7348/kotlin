@@ -16,10 +16,20 @@
 
 package org.jetbrains.kotlin.daemon
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.util.Disposer
 import junit.framework.TestCase
 import org.jetbrains.kotlin.cli.AbstractCliTest
+import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
+import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
+import org.jetbrains.kotlin.cli.common.messages.MessageRenderer
+import org.jetbrains.kotlin.cli.common.messages.PrintingMessageCollector
 import org.jetbrains.kotlin.cli.common.repl.*
+import org.jetbrains.kotlin.cli.jvm.config.addJvmClasspathRoots
+import org.jetbrains.kotlin.cli.jvm.config.jvmClasspathRoots
+import org.jetbrains.kotlin.cli.jvm.repl.GenericReplCompiler
+import org.jetbrains.kotlin.config.CommonConfigurationKeys
+import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.daemon.client.*
 import org.jetbrains.kotlin.daemon.common.*
 import org.jetbrains.kotlin.integration.KotlinIntegrationTestBase
@@ -27,6 +37,7 @@ import org.jetbrains.kotlin.progress.CompilationCanceledStatus
 import org.jetbrains.kotlin.script.*
 import org.jetbrains.kotlin.test.KotlinTestUtils
 import org.jetbrains.kotlin.utils.PathUtil
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.URL
@@ -358,7 +369,7 @@ class CompilerDaemonTest : KotlinIntegrationTestBase() {
 
         withFlagFile(getTestName(true), ".alive") { flagFile ->
             val daemonOptions = DaemonOptions(runFilesPath = File(tmpdir, getTestName(true)).absolutePath)
-            val daemonJVMOptions = configureDaemonJVMOptions(inheritMemoryLimits = false, inheritAdditionalProperties = false)
+            val daemonJVMOptions = configureDaemonJVMOptions(inheritMemoryLimits = true, inheritAdditionalProperties = false)
             val daemon = KotlinCompilerClient.connectToCompileService(compilerId, flagFile, daemonJVMOptions, daemonOptions, DaemonReportingTargets(out = System.err), autostart = true)
             assertNotNull("failed to connect daemon", daemon)
 
@@ -471,6 +482,52 @@ class CompilerDaemonTest : KotlinIntegrationTestBase() {
         }
     }
 
+    fun testDaemonReplEmulated() {
+
+        val disposable = Disposer.newDisposable()
+
+        val repl = DaemonReplLocalEmulator(disposable,
+                                           listOf(File(KotlinIntegrationTestBase.getCompilerLib(), "kotlin-runtime.jar")),
+                                           "kotlin.script.StandardScriptTemplate")
+
+        val res1 = repl.replCompiler?.check(ReplCodeLine(0, "val x ="), emptyList())
+        TestCase.assertTrue("Unexpected check results: $res1", res1 is ReplCheckResult.Incomplete)
+
+        val codeLine0 = ReplCodeLine(0, "1 + 2")
+        val res2 = repl.replCompiler?.compile(codeLine0, emptyList())
+        val res2c = res2 as? ReplCompileResult.CompiledClasses
+        TestCase.assertNotNull("Unexpected compile result: $res2", res2c)
+
+        val res21 = repl.compiledEvaluator.eval(codeLine0, emptyList(), res2c!!.classes, res2c.hasResult, res2c.newClasspath)
+        val res21e = res21 as? ReplEvalResult.ValueResult
+        TestCase.assertNotNull("Unexpected eval result: $res21", res21e)
+        TestCase.assertEquals(3, res21e!!.value)
+
+        val codeLine1 = ReplCodeLine(1, "val x = 5")
+        val res3 = repl.replCompiler?.compile(codeLine1, listOf(codeLine0))
+        val res3c = res3 as? ReplCompileResult.CompiledClasses
+        TestCase.assertNotNull("Unexpected compile result: $res3", res3c)
+
+        val res31 = repl.compiledEvaluator.eval(codeLine1, listOf(codeLine0), res3c!!.classes, res3c.hasResult, res3c.newClasspath)
+        val res31e = res31 as? ReplEvalResult.UnitResult
+        TestCase.assertNotNull("Unexpected eval result: $res31", res31e)
+
+        val codeLine2 = ReplCodeLine(0, "x + 2")
+        val res4x = repl.replCompiler?.compile(codeLine2, listOf(codeLine1))
+        TestCase.assertNotNull("Unexpected compile result: $res4x", res4x as? ReplCompileResult.HistoryMismatch)
+
+        val res4 = repl.replCompiler?.compile(codeLine2, listOf(codeLine0, codeLine1))
+        val res4c = res4 as? ReplCompileResult.CompiledClasses
+        TestCase.assertNotNull("Unexpected compile result: $res4", res4c)
+
+        val res41 = repl.compiledEvaluator.eval(codeLine2, emptyList(), res4c!!.classes, res4c.hasResult, res4c.newClasspath)
+        val res41e = res41 as? ReplEvalResult.ValueResult
+        TestCase.assertNotNull("Unexpected eval result: $res41", res41e)
+        TestCase.assertEquals(3, res41e!!.value)
+
+        Disposer.dispose(disposable)
+    }
+
     fun testDaemonReplLocalEval() {
         withFlagFile(getTestName(true), ".alive") { flagFile ->
             val daemonOptions = DaemonOptions(runFilesPath = File(tmpdir, getTestName(true)).absolutePath)
@@ -489,13 +546,12 @@ class CompilerDaemonTest : KotlinIntegrationTestBase() {
 
             val codeLine = ReplCodeLine(0, "1 + 2")
             val res2 = repl.compile(codeLine, emptyList())
-
-            val compileRes = res2 as? ReplCompileResult.CompiledClasses
-            TestCase.assertNotNull("Unexpected compile result: $res2", compileRes)
+            val res2c = res2 as? ReplCompileResult.CompiledClasses
+            TestCase.assertNotNull("Unexpected compile result: $res2", res2c)
 
             val localEvaluator = GenericReplCompiledEvaluator(emptyList(), Thread.currentThread().contextClassLoader)
 
-            val res3 = localEvaluator.eval(codeLine, emptyList(), compileRes!!.classes, compileRes.hasResult, compileRes.newClasspath)
+            val res3 = localEvaluator.eval(codeLine, emptyList(), res2c!!.classes, res2c.hasResult, res2c.newClasspath)
             val evalRes = res3 as? ReplEvalResult.ValueResult
             TestCase.assertNotNull("Unexpected eval result: $res3", evalRes)
             TestCase.assertEquals(3, evalRes!!.value)
@@ -504,33 +560,36 @@ class CompilerDaemonTest : KotlinIntegrationTestBase() {
         }
     }
 
-//    fun testDaemonReplRemoteEval() {
-//        withFlagFile(getTestName(true), ".alive") { flagFile ->
-//            val daemonOptions = DaemonOptions(runFilesPath = File(tmpdir, getTestName(true)).absolutePath)
-//            val daemonJVMOptions = configureDaemonJVMOptions(inheritMemoryLimits = false, inheritAdditionalProperties = false)
-//            val daemon = KotlinCompilerClient.connectToCompileService(compilerId, flagFile, daemonJVMOptions, daemonOptions, DaemonReportingTargets(out = System.err), autostart = true)
-//            assertNotNull("failed to connect daemon", daemon)
-//
-//            val evalOut = ByteArrayOutputStream()
-//            val evalErr = ByteArrayOutputStream()
-//            val evalIn = ByteArrayInputStream("42\n".toByteArray())
-//
-//            val disposable = Disposer.newDisposable()
-//
-//            val repl = KotlinRemoteReplEvaluator(disposable, daemon!!, null, CompileService.TargetPlatform.JVM, emptyList(),
-//                                                 "<StandardScriptTemplate>", System.err, evalOut, evalErr, evalIn)
-//
-//            val res1 = repl.check(ReplCodeLine(0, "val x ="), emptyList())
-//            TestCase.assertEquals(ReplCheckResult.Incomplete, res1)
-//
-//            val res2 = repl.eval(ReplCodeLine(0, "1 + 2"), emptyList())
-//            TestCase.assertEquals(ReplEvalResult.ValueResult(3), res2)
-//
-//            Disposer.dispose(disposable)
-//        }
-//    }
-}
+    fun testDaemonReplRemoteEval() {
+        withFlagFile(getTestName(true), ".alive") { flagFile ->
+            val daemonOptions = DaemonOptions(runFilesPath = File(tmpdir, getTestName(true)).absolutePath)
+            val daemonJVMOptions = configureDaemonJVMOptions(inheritMemoryLimits = false, inheritAdditionalProperties = false)
+            val daemon = KotlinCompilerClient.connectToCompileService(compilerId, flagFile, daemonJVMOptions, daemonOptions, DaemonReportingTargets(out = System.err), autostart = true)
+            assertNotNull("failed to connect daemon", daemon)
 
+            val evalOut = ByteArrayOutputStream()
+            val evalErr = ByteArrayOutputStream()
+            val evalIn = ByteArrayInputStream("42\n".toByteArray())
+
+            val disposable = Disposer.newDisposable()
+
+            val repl = KotlinRemoteReplEvaluator(disposable, daemon!!, null, CompileService.TargetPlatform.JVM,
+                                                 listOf(File(KotlinIntegrationTestBase.getCompilerLib(), "kotlin-runtime.jar")),
+                                                 "kotlin.script.StandardScriptTemplate",
+                                                 System.err, evalOut, evalErr, evalIn)
+
+            val res1 = repl.check(ReplCodeLine(0, "val x ="), emptyList())
+            TestCase.assertTrue("Unexpected check results: $res1", res1 is ReplCheckResult.Incomplete)
+
+            val res2 = repl.eval(ReplCodeLine(0, "1 + 2"), emptyList())
+            val evalRes = res2 as? ReplEvalResult.ValueResult
+            TestCase.assertNotNull("Unexpected eval result: $res2", evalRes)
+            TestCase.assertEquals(3, evalRes!!.value)
+
+            Disposer.dispose(disposable)
+        }
+    }
+}
 
 
 // stolen from CompilerFileLimitTest
@@ -637,3 +696,55 @@ internal fun URL.toFile() =
             if (protocol != "file") null
             else File(file)
         }
+
+internal class DaemonReplLocalEmulator(
+        disposable: Disposable,
+        templateClasspath: List<File>,
+        templateClassName: String
+) {
+
+    private val messageCollector = PrintingMessageCollector(System.out, MessageRenderer.WITHOUT_PATHS, false)
+    private val configuration = CompilerConfiguration().apply {
+        addJvmClasspathRoots(PathUtil.getJdkClassesRoots())
+        addJvmClasspathRoots(PathUtil.getKotlinPathsForCompiler().let { listOf(it.runtimePath, it.reflectPath) })
+        addJvmClasspathRoots(templateClasspath)
+        put(CommonConfigurationKeys.MODULE_NAME, "kotlin-script")
+    }
+    private fun makeScriptDefinition(templateClasspath: List<File>, templateClassName: String): KotlinScriptDefinition? {
+        val classloader = URLClassLoader(templateClasspath.map { it.toURI().toURL() }.toTypedArray(), this.javaClass.classLoader)
+
+        try {
+            val cls = classloader.loadClass(templateClassName)
+            val def = KotlinScriptDefinitionFromAnnotatedTemplate(cls.kotlin, null, null, emptyMap())
+            messageCollector.report(
+                    CompilerMessageSeverity.INFO,
+                    "New script definition $templateClassName: files pattern = \"${def.scriptFilePattern}\", resolver = ${def.resolver?.javaClass?.name}",
+                    CompilerMessageLocation.NO_LOCATION
+            )
+            return def
+        }
+        catch (ex: ClassNotFoundException) {
+            messageCollector.report(
+                    CompilerMessageSeverity.ERROR, "Cannot find script definition template class $templateClassName", CompilerMessageLocation.NO_LOCATION
+            )
+        }
+        catch (ex: Exception) {
+            messageCollector.report(
+                    CompilerMessageSeverity.ERROR, "Error processing script definition template $templateClassName: ${ex.message}", CompilerMessageLocation.NO_LOCATION
+            )
+        }
+        return null
+    }
+
+    private val scriptDef = makeScriptDefinition(templateClasspath, templateClassName)
+
+    val replCompiler : GenericReplCompiler? by lazy {
+        if (scriptDef == null) null
+        else GenericReplCompiler(disposable, scriptDef, configuration, messageCollector)
+    }
+
+    val compiledEvaluator : GenericReplCompiledEvaluator by lazy {
+        GenericReplCompiledEvaluator(configuration.jvmClasspathRoots, null, emptyArray<String>())
+    }
+}
+
