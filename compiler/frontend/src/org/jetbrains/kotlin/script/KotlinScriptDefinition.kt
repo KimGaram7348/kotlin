@@ -18,23 +18,12 @@ package org.jetbrains.kotlin.script
 
 import com.intellij.openapi.fileTypes.LanguageFileType
 import com.intellij.openapi.project.Project
-import org.jetbrains.kotlin.descriptors.ScriptDescriptor
-import org.jetbrains.kotlin.descriptors.annotations.Annotations
 import org.jetbrains.kotlin.idea.KotlinFileType
-import org.jetbrains.kotlin.name.ClassId
-import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.parsing.KotlinParserDefinition
 import org.jetbrains.kotlin.psi.KtScript
-import org.jetbrains.kotlin.resolve.descriptorUtil.module
-import org.jetbrains.kotlin.serialization.deserialization.NotFoundClasses
-import org.jetbrains.kotlin.serialization.deserialization.findNonGenericClassAcrossDependencies
-import org.jetbrains.kotlin.storage.LockBasedStorageManager
-import org.jetbrains.kotlin.types.*
 import java.io.File
-import java.lang.RuntimeException
-import java.lang.UnsupportedOperationException
-import kotlin.reflect.*
+import kotlin.reflect.KClass
 import kotlin.script.StandardScriptTemplate
 
 open class KotlinScriptDefinition(val template: KClass<out Any>) {
@@ -61,51 +50,5 @@ interface KotlinScriptExternalDependencies {
     val scripts: Iterable<File> get() = emptyList()
 }
 
-data class ScriptParameter(val name: Name, val type: KotlinType)
-
 object StandardScriptDefinition : KotlinScriptDefinition(StandardScriptTemplate::class)
 
-fun KotlinScriptDefinition.getScriptParameters(scriptDescriptor: ScriptDescriptor): List<ScriptParameter> =
-        template.primaryConstructor?.parameters
-                ?.map { ScriptParameter(Name.identifier(it.name!!), getKotlinTypeByKType(scriptDescriptor, it.type)) }
-        ?: emptyList()
-
-fun getKotlinType(scriptDescriptor: ScriptDescriptor, kClass: KClass<out Any>): KotlinType =
-        getKotlinTypeByFqName(scriptDescriptor,
-                              kClass.qualifiedName ?: throw RuntimeException("Cannot get FQN from $kClass"))
-
-fun getKotlinTypeByFqName(scriptDescriptor: ScriptDescriptor, fqName: String): KotlinType =
-        scriptDescriptor.module.findNonGenericClassAcrossDependencies(
-                ClassId.topLevel(FqName(fqName)),
-                NotFoundClasses(LockBasedStorageManager.NO_LOCKS, scriptDescriptor.module)
-        ).defaultType
-
-// TODO: support star projections
-// TODO: support annotations on types and type parameters
-// TODO: support type parameters on types and type projections
-fun getKotlinTypeByKType(scriptDescriptor: ScriptDescriptor, kType: KType): KotlinType {
-    val classifier = kType.classifier
-    if (classifier !is KClass<*>)
-        throw UnsupportedOperationException("Only classes are supported as parameters in script template: $classifier")
-
-    val type = getKotlinType(scriptDescriptor, classifier)
-    val typeProjections = kType.arguments.map { getTypeProjection(scriptDescriptor, it) }
-    val isNullable = kType.isMarkedNullable
-
-    return KotlinTypeFactory.simpleType(Annotations.EMPTY, type.constructor, typeProjections, isNullable)
-}
-
-private fun getTypeProjection(scriptDescriptor: ScriptDescriptor, kTypeProjection: KTypeProjection): TypeProjection {
-    val kType = kTypeProjection.type ?: throw UnsupportedOperationException("Star projections are not supported")
-
-    val type = getKotlinTypeByKType(scriptDescriptor, kType)
-
-    val variance = when (kTypeProjection.variance) {
-        KVariance.IN -> Variance.IN_VARIANCE
-        KVariance.OUT -> Variance.OUT_VARIANCE
-        KVariance.INVARIANT -> Variance.INVARIANT
-        null -> throw UnsupportedOperationException("Star projections are not supported")
-    }
-
-    return TypeProjectionImpl(variance, type)
-}
